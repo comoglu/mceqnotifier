@@ -63,6 +63,9 @@ EVENT_TYPES = [
 DEFAULT_TIMEOUT = 120
 BULLETIN_TIMEOUT = 60
 
+# UTF-8 environment for SeisComP subprocess calls
+_UTF8_ENV = {**os.environ, 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8'}
+
 
 # =============================================================================
 # Infrastructure Classes
@@ -320,7 +323,8 @@ class ScEvtLs:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=_UTF8_ENV
             )
 
             if result.returncode != 0:
@@ -427,7 +431,8 @@ class ScXmlDump:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=_UTF8_ENV
             )
 
             if result.returncode != 0:
@@ -507,7 +512,8 @@ class ScBulletin:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=_UTF8_ENV
             )
 
             if result.returncode != 0:
@@ -557,7 +563,8 @@ class ScBulletin:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=_UTF8_ENV
             )
 
             if result.returncode != 0:
@@ -600,7 +607,8 @@ class ScBulletin:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=_UTF8_ENV
             )
 
             if result.returncode != 0:
@@ -673,7 +681,8 @@ class ScMapCut:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=_UTF8_ENV
             )
 
             if result.returncode != 0:
@@ -705,6 +714,7 @@ class BulletinOutputConfig:
     kml: bool = True            # --kml format
     map_image: bool = True      # scmapcut PNG
     keep_xml: bool = False      # Keep intermediate XML file
+    combined: bool = False      # Combine all autoloc3 bulletins into one file
 
 
 @dataclass
@@ -1251,6 +1261,7 @@ Supported event types:
     batch_parser.add_argument("--no-kml", action="store_true", help="Skip KML format")
     batch_parser.add_argument("--no-map", action="store_true", help="Skip map image")
     batch_parser.add_argument("--keep-xml", action="store_true", help="Keep intermediate XML files")
+    batch_parser.add_argument("--combined", action="store_true", help="Write all autoloc3 bulletins into a single combined text file")
 
     # --- REALTIME command ---
     realtime_parser = subparsers.add_parser("realtime", help="Real-time monitoring mode")
@@ -1311,6 +1322,7 @@ def get_output_config(args) -> BulletinOutputConfig:
         kml=not getattr(args, 'no_kml', False),
         map_image=not getattr(args, 'no_map', False),
         keep_xml=getattr(args, 'keep_xml', False),
+        combined=getattr(args, 'combined', False),
     )
 
 
@@ -1352,6 +1364,18 @@ def handle_batch_command(args, config: ConfigManager, logger: logging.Logger) ->
         output_dir=args.output_dir,
         progress_callback=cli_progress_callback
     )
+
+    # Generate combined autoloc3 file if requested
+    if output_config.combined:
+        separator = "\n" + "=" * 80 + "\n"
+        texts = [r.autoloc3_text for r in results if r.autoloc3_text]
+        if texts:
+            combined_path = Path(args.output_dir) / "bulletin_combined.txt"
+            with open(combined_path, 'w') as f:
+                f.write(separator.join(texts))
+            print(f"\nCombined autoloc3 bulletin: {combined_path}")
+        else:
+            print("\nNo autoloc3 bulletins to combine")
 
     # Summary
     success_count = sum(1 for r in results if r.is_success())
@@ -1570,12 +1594,15 @@ def launch_embedded_gui(args, config: ConfigManager, logger: logging.Logger) -> 
             self.map_cb.setChecked(True)
             self.keep_xml_cb = QCheckBox("Keep XML")
             self.keep_xml_cb.setChecked(False)
+            self.combined_cb = QCheckBox("Combined File")
+            self.combined_cb.setChecked(False)
 
             layout.addWidget(self.autoloc3_cb)
             layout.addWidget(self.fdsnws_cb)
             layout.addWidget(self.kml_cb)
             layout.addWidget(self.map_cb)
             layout.addWidget(self.keep_xml_cb)
+            layout.addWidget(self.combined_cb)
             layout.addStretch()
 
             self.setLayout(layout)
@@ -1587,6 +1614,7 @@ def launch_embedded_gui(args, config: ConfigManager, logger: logging.Logger) -> 
                 kml=self.kml_cb.isChecked(),
                 map_image=self.map_cb.isChecked(),
                 keep_xml=self.keep_xml_cb.isChecked(),
+                combined=self.combined_cb.isChecked(),
             )
 
     class MainWindow(QMainWindow):
@@ -1955,6 +1983,21 @@ def launch_embedded_gui(args, config: ConfigManager, logger: logging.Logger) -> 
                         status = "Complete" if result.is_success() else "Error"
                         self.event_table.setItem(row, 1, QTableWidgetItem(status))
                         break
+
+            # Generate combined autoloc3 file if requested
+            output_config = self.output_format_selector.get_config()
+            if output_config.combined:
+                separator = "\n" + "=" * 80 + "\n"
+                texts = [r.autoloc3_text for r in results if r.autoloc3_text]
+                if texts:
+                    output_dir = self.config.get_output_directory()
+                    combined_path = Path(output_dir) / "bulletin_combined.txt"
+                    with open(combined_path, 'w') as f:
+                        f.write(separator.join(texts))
+                    QMessageBox.information(
+                        self, "Combined Bulletin",
+                        f"Combined autoloc3 bulletin saved to:\n{combined_path}"
+                    )
 
             success_count = sum(1 for r in results if r.is_success())
             self.status_bar.showMessage(
